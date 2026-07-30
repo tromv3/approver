@@ -1,7 +1,11 @@
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+import tzlocal
 
 from .config import DB_PATH
+
+LOCAL_TZ = tzlocal.get_localzone()
 
 
 def get_conn():
@@ -280,10 +284,8 @@ def get_event(event_id):
 def add_reminder_for_user(user_id, event_id, day_str, time_str, reminder_minutes):
     if reminder_minutes <= 0:
         return
-    # naive local -> UTC shift (keeps current simple behaviour)
-    dt_local = datetime.fromisoformat(f"{day_str}T{time_str}")
-    offset = datetime.now() - datetime.utcnow()
-    dt_utc = dt_local - offset
+    dt_local = datetime.fromisoformat(f"{day_str}T{time_str}").replace(tzinfo=LOCAL_TZ)
+    dt_utc = dt_local.astimezone(timezone.utc).replace(tzinfo=None)
     remind_at = (dt_utc - timedelta(minutes=reminder_minutes)).isoformat(timespec="minutes")
     conn = get_conn()
     cur = conn.cursor()
@@ -293,21 +295,31 @@ def add_reminder_for_user(user_id, event_id, day_str, time_str, reminder_minutes
     conn.close()
 
 
-def get_due_reminders(now_iso: str):
-    conn = get_conn()
-    cur = conn.cursor()
-    cur.execute(
-        "SELECT r.reminder_id, r.user_id, e.event_date, e.event_time, e.event_type FROM reminders r JOIN events e ON r.event_id = e.event_id WHERE r.sent = 0 AND r.remind_at <= ?",
-        (now_iso,),
-    )
-    rows = cur.fetchall()
-    conn.close()
-    return rows
+def claim_due_reminders(now_iso: str):
+    """Atomically select due, unsent reminders and mark them as sent.
 
-
-def mark_reminder_sent(reminder_id):
+    Selecting and marking happen in a single transaction so two overlapping
+    calls (e.g. a slow job run still in flight when the next one fires)
+    can't both claim the same reminder and send it twice.
+    """
     conn = get_conn()
-    cur = conn.cursor()
-    cur.execute("UPDATE reminders SET sent = 1 WHERE reminder_id = ?", (reminder_id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT r.reminder_id, r.user_id, e.event_date, e.event_time, e.event_type FROM reminders r JOIN events e ON r.event_id = e.event_id WHERE r.sent = 0 AND r.remind_at <= ?",
+            (now_iso,),
+        )
+        rows = cur.fetchall()
+        if rows:
+            cur.executemany(
+                "UPDATE reminders SET sent = 1 WHERE reminder_id = ?",
+                [(row[0],) for row in rows],
+            )
+        conn.commit()
+        return rows
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()

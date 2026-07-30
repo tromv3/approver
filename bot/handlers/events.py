@@ -355,6 +355,10 @@ async def event_select_friend(update: Update, context: ContextTypes.DEFAULT_TYPE
     q = update.callback_query
     await q.answer()
     friend_id = int(q.data.split("_")[-1])
+    if db.get_friend_status(q.from_user.id, friend_id) != "accepted":
+        return await q.edit_message_text(
+            "Этот пользователь не в списке ваших друзей.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
     context.user_data["event_friend_id"] = friend_id
     kb = [[InlineKeyboardButton(label, callback_data=f"rem_{minutes}")] for label, minutes in STD_REMS]
     kb.append([InlineKeyboardButton("Отмена", callback_data="events")])
