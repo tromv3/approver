@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime
 
 from telegram.ext import ContextTypes
 
 from . import db
+
+logger = logging.getLogger(__name__)
 
 
 async def reminder_loop(context: ContextTypes.DEFAULT_TYPE):
@@ -12,6 +15,6 @@ async def reminder_loop(context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(chat_id=user_id,
                                            text=f"⏰ Напоминание!\n📅 {ev_date} 🕒 {ev_time}\n🎯 {ev_type}")
-        except Exception as e:
-            print("Ошибка отправки напоминания:", e)
+        except Exception:
+            logger.exception("Ошибка отправки напоминания пользователю %s", user_id)
         db.mark_reminder_sent(reminder_id)

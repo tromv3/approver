@@ -1,8 +1,12 @@
+import logging
+
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from .. import db
 from .common import send_text, show_main_menu
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_friends_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -56,8 +60,8 @@ async def add_friend_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     try:
         await context.bot.send_message(chat_id=tid, text=f"@{me.username} отправил(а) вам заявку в друзья.",
                                        reply_markup=kb)
-    except Exception as e:
-        print("send warning:", e)
+    except Exception:
+        logger.exception("Не удалось отправить заявку в друзья пользователю %s", tid)
 
     await update.message.reply_text("Заявка отправлена.")
     return await show_main_menu(update, context)

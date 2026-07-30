@@ -1,3 +1,4 @@
+import logging
 from datetime import date, datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -8,6 +9,8 @@ from ..constants import AWAIT_REJECT, EV_CONFIRM, EV_SEL_DATE, EV_SEL_REM, EV_SE
     STD_REMS, STD_TYPES
 from ..keyboards import build_calendar_keyboard
 from .common import show_main_menu
+
+logger = logging.getLogger(__name__)
 
 
 def format_event_row(ev, viewer_id):
@@ -394,8 +397,8 @@ async def event_confirm_create(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         event_id = db.create_event(creator_id, participant_id, day_str, time_str, type_str, reminder_minutes)
-    except Exception as e:
-        print("DB ERROR create_event", e)
+    except Exception:
+        logger.exception("Ошибка создания события в БД")
         return await q.edit_message_text("Не удалось создать событие.")
 
     kb = [[InlineKeyboardButton("Принять", callback_data=f"accept_event_{event_id}")],
@@ -404,8 +407,8 @@ async def event_confirm_create(update: Update, context: ContextTypes.DEFAULT_TYP
         await context.bot.send_message(chat_id=participant_id,
                                        text=f"@{q.from_user.username} предлагает вам событие:\n📅 {day_str} 🕒 {time_str}\n🎯 {type_str}",
                                        reply_markup=InlineKeyboardMarkup(kb))
-    except Exception as e:
-        print("BOT SEND WARNING", e)
+    except Exception:
+        logger.exception("Не удалось уведомить пользователя %s о новом событии", participant_id)
 
     await q.edit_message_text("Событие предложено. Ожидайте ответа.", reply_markup=InlineKeyboardMarkup(
         [[InlineKeyboardButton("Назад", callback_data="events")]]))
@@ -521,8 +524,8 @@ async def event_delete_execute(update: Update, context: ContextTypes.DEFAULT_TYP
             chat_id=other_user_id,
             text=f"Событие было удалено:\n{ev_date} {ev_time} - {etype}\nID: {event_id}"
         )
-    except Exception as e:
-        print(f"Не удалось уведомить пользователя {other_user_id}: {e}")
+    except Exception:
+        logger.exception("Не удалось уведомить пользователя %s об удалении события", other_user_id)
 
     await query.edit_message_text(
         "Событие успешно удалено.",

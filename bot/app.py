@@ -1,3 +1,5 @@
+import logging
+
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -13,8 +15,14 @@ from .config import TELEGRAM_BOT_TOKEN
 from .handlers import common, events, friends
 from .reminders import reminder_loop
 
+logger = logging.getLogger(__name__)
+
 
 def main(token: str | None = None) -> None:
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        level=logging.INFO,
+    )
     db.init_db()
     if token is None:
         token = TELEGRAM_BOT_TOKEN
@@ -68,6 +76,6 @@ def main(token: str | None = None) -> None:
 
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        print(f"Ошибка при работе бота: {e}")
+    except Exception:
+        logger.exception("Ошибка при работе бота")
         application.run_polling(allowed_updates=Update.ALL_TYPES)
