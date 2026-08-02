@@ -33,5 +33,5 @@ def build_calendar_keyboard(y: int, m: int, user_id: int, mode: str = "create") 
                 row.append(InlineKeyboardButton(label, callback_data=f"select_date_{mode}_{date_str}"))
         keyboard.append(row)
 
-    keyboard.append([InlineKeyboardButton("Назад", callback_data=("events" if mode == "create" else "friends"))])
+    keyboard.append([InlineKeyboardButton("Назад", callback_data="events")])
     return InlineKeyboardMarkup(keyboard)

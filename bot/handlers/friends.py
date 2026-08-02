@@ -4,7 +4,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from .. import db
-from .common import send_text, show_main_menu
+from .common import clear_flow_state, mention, send_text, show_main_menu
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 async def handle_friends_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+    clear_flow_state(context)
     kb = [
         [InlineKeyboardButton("Добавить в друзья", callback_data="add_friend")],
         [InlineKeyboardButton("Мои друзья", callback_data="list_friends")],
@@ -58,7 +59,7 @@ async def add_friend_received(update: Update, context: ContextTypes.DEFAULT_TYPE
           InlineKeyboardButton("Отклонить", callback_data=f"friend_reject_{me.id}")]]
     )
     try:
-        await context.bot.send_message(chat_id=tid, text=f"@{me.username} отправил(а) вам заявку в друзья.",
+        await context.bot.send_message(chat_id=tid, text=f"{mention(me)} отправил(а) вам заявку в друзья.",
                                        reply_markup=kb)
     except Exception:
         logger.exception("Не удалось отправить заявку в друзья пользователю %s", tid)
@@ -82,7 +83,7 @@ async def pending_requests_start(update: Update, context: ContextTypes.DEFAULT_T
         label = f"@{uname}" if uname else str(sender_id)
         kb.append([InlineKeyboardButton(f"Принять {label}", callback_data=f"friend_accept_{sender_id}"),
                    InlineKeyboardButton("Отклонить", callback_data=f"friend_reject_{sender_id}")])
-        text += f"{label}"
+        text += f"\n{label}"
     kb.append([InlineKeyboardButton("Назад", callback_data="friends")])
     return await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -97,7 +98,7 @@ async def friend_accept_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         await context.bot.send_message(chat_id=sender_id,
-                                       text=f"Пользователь @{q.from_user.username} принял вашу заявку.")
+                                       text=f"Пользователь {mention(q.from_user)} принял вашу заявку.")
         await q.edit_message_text("Заявка принята.")
     except Exception:
         pass
@@ -113,7 +114,7 @@ async def friend_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     try:
         await context.bot.send_message(chat_id=sender_id,
-                                       text=f"Пользователь @{q.from_user.username} отклонил вашу заявку.")
+                                       text=f"Пользователь {mention(q.from_user)} отклонил вашу заявку.")
         await q.edit_message_text("Заявка отклонена.")
         return await show_main_menu(update, context)
     except Exception:
@@ -127,7 +128,7 @@ async def list_friends_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not rows:
         return await q.edit_message_text("У вас нет друзей.")
 
-    text = "Ваши друзья:\n" + "".join([f"@{r[1]}\n" if r[1] else str(r[0]) for r in rows])
+    text = "Ваши друзья:\n" + "".join([f"@{r[1]}\n" if r[1] else f"{r[0]}\n" for r in rows])
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(
         [[InlineKeyboardButton("Назад", callback_data="friends")]]))
     return None
@@ -156,7 +157,7 @@ async def friend_remove_callback(update: Update, context: ContextTypes.DEFAULT_T
     db.remove_friendship(me, fid)
 
     try:
-        await context.bot.send_message(chat_id=fid, text=f"Пользователь @{q.from_user.username} удалил вас из друзей.")
+        await context.bot.send_message(chat_id=fid, text=f"Пользователь {mention(q.from_user)} удалил вас из друзей.")
     except Exception:
         pass
 

@@ -108,7 +108,7 @@ def get_user_by_identifier(identifier: str):
         cur.execute("SELECT user_id, username FROM users WHERE user_id = %s", (uid,))
     except ValueError:
         name = identifier.lstrip("@")
-        cur.execute("SELECT user_id, username FROM users WHERE username = %s", (name,))
+        cur.execute("SELECT user_id, username FROM users WHERE lower(username) = lower(%s)", (name,))
     row = cur.fetchone()
     conn.close()
     return row

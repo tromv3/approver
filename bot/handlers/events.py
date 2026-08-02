@@ -8,7 +8,7 @@ from .. import db
 from ..constants import AWAIT_REJECT, EV_CONFIRM, EV_SEL_DATE, EV_SEL_REM, EV_SEL_TIME, EV_TYPE_CH, EV_TYPE_CUSTOM, \
     STD_REMS, STD_TYPES
 from ..keyboards import build_calendar_keyboard
-from .common import show_main_menu
+from .common import clear_flow_state, mention, show_main_menu
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ async def handle_events_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         chat_id = update.message.chat_id
         message_id = None
         is_callback = False
+
+    clear_flow_state(context)
 
     # Создаем клавиатуру меню событий
     kb = [
@@ -134,8 +136,11 @@ async def show_time_suggestions(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def event_receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if "event_date" not in context.user_data:
-        return await show_main_menu(update, context)
+    # Ждём время только в окне между выбором даты и выбором времени; иначе это
+    # текст для другого флоу (кастомный тип события, причина отказа и т.п.) —
+    # не перехватываем его.
+    if "event_date" not in context.user_data or "event_time" in context.user_data:
+        return None
 
     text = update.message.text.strip()
 
@@ -409,7 +414,7 @@ async def event_confirm_create(update: Update, context: ContextTypes.DEFAULT_TYP
           [InlineKeyboardButton("Отклонить", callback_data=f"reject_event_{event_id}")]]
     try:
         await context.bot.send_message(chat_id=participant_id,
-                                       text=f"@{q.from_user.username} предлагает вам событие:\n📅 {day_str} 🕒 {time_str}\n🎯 {type_str}",
+                                       text=f"{mention(q.from_user)} предлагает вам событие:\n📅 {day_str} 🕒 {time_str}\n🎯 {type_str}",
                                        reply_markup=InlineKeyboardMarkup(kb))
     except Exception:
         logger.exception("Не удалось уведомить пользователя %s о новом событии", participant_id)
@@ -548,6 +553,8 @@ async def event_accept_callback(update: Update, context: ContextTypes.DEFAULT_TY
     user_id = q.from_user.id
     if user_id != ev[2]:
         return await q.answer("Вы не можете принять это событие.", show_alert=True)
+    if ev[6] != "pending":
+        return await q.edit_message_text(f"Событие #{event_id} уже обработано ранее.")
 
     db.mark_event_accepted(event_id)
     ev2 = db.get_event(event_id)
@@ -558,7 +565,7 @@ async def event_accept_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
         await context.bot.send_message(chat_id=ev2[1],
-                                       text=f"Пользователь @{q.from_user.username} принял ваше приглашение на событие #{event_id} ({ev2[3]} {ev2[4]}).")
+                                       text=f"Пользователь {mention(q.from_user)} принял ваше приглашение на событие #{event_id} ({ev2[3]} {ev2[4]}).")
         await context.bot.send_message(chat_id=ev2[2],
                                        text=f"Вы подтвердили участие в событии #{event_id} ({ev2[3]} {ev2[4]}).")
     except Exception:
@@ -580,6 +587,8 @@ async def event_reject_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return await q.edit_message_text("Событие не найдено или уже удалено.")
     if q.from_user.id != ev[2]:
         return await q.answer("Вы не можете отклонить это событие.", show_alert=True)
+    if ev[6] != "pending":
+        return await q.edit_message_text(f"Событие #{event_id} уже обработано ранее.")
 
     context.user_data["awaiting_reject_for_event"] = event_id
     await q.edit_message_text(
