@@ -47,8 +47,25 @@ async def add_friend_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     if tid == me.id:
         return await update.message.reply_text("Нельзя добавить себя в друзья.")
 
-    if db.get_friend_status(me.id, tid) == "accepted":
+    my_status = db.get_friend_status(me.id, tid)
+    if my_status == "accepted":
         await update.message.reply_text("Вы уже в друзьях.")
+        return await show_main_menu(update, context)
+    if my_status == "pending":
+        await update.message.reply_text("Вы уже отправили заявку этому пользователю. Ожидайте ответа.")
+        return await show_main_menu(update, context)
+
+    if db.get_friend_status(tid, me.id) == "pending":
+        # Этот пользователь уже прислал нам заявку — принимаем её вместо
+        # того чтобы заводить встречную pending-заявку, которая всё равно
+        # ни к чему не приведёт без ручного принятия.
+        db.accept_friend_request(tid, me.id)
+        try:
+            await context.bot.send_message(chat_id=tid, text=f"{mention(me)} принял(а) вашу заявку в друзья.")
+        except Exception:
+            logger.exception("Не удалось уведомить пользователя %s о принятии заявки", tid)
+        await update.message.reply_text(
+            "У этого пользователя уже была заявка вам — вы автоматически стали друзьями.")
         return await show_main_menu(update, context)
 
     # insert pending request (from me -> tid)
@@ -96,10 +113,14 @@ async def friend_accept_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     db.accept_friend_request(sender_id, recipient_id)
 
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Главное меню", callback_data="back_to_main")]])
     try:
         await context.bot.send_message(chat_id=sender_id,
                                        text=f"Пользователь {mention(q.from_user)} принял вашу заявку.")
-        await q.edit_message_text("Заявка принята.")
+    except Exception:
+        logger.exception("Не удалось уведомить пользователя %s о принятии заявки", sender_id)
+    try:
+        await q.edit_message_text("Заявка принята.", reply_markup=kb)
     except Exception:
         pass
 
@@ -126,7 +147,8 @@ async def list_friends_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await q.answer()
     rows = db.get_friends(q.from_user.id)
     if not rows:
-        return await q.edit_message_text("У вас нет друзей.")
+        return await q.edit_message_text("У вас нет друзей.", reply_markup=InlineKeyboardMarkup(
+            [[InlineKeyboardButton("Назад", callback_data="friends")]]))
 
     text = "Ваши друзья:\n" + "".join([f"@{r[1]}\n" if r[1] else f"{r[0]}\n" for r in rows])
     await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup(

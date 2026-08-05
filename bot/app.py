@@ -18,6 +18,18 @@ from .reminders import reminder_loop
 logger = logging.getLogger(__name__)
 
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.error("Необработанное исключение при обработке update: %s", update, exc_info=context.error)
+    if isinstance(update, Update) and update.effective_chat:
+        try:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text="⚠️ Что-то пошло не так. Попробуйте ещё раз или наберите /start.",
+            )
+        except Exception:
+            pass
+
+
 def main(token: str | None = None) -> None:
     logging.basicConfig(
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -37,8 +49,12 @@ def main(token: str | None = None) -> None:
         .build()
     )
 
+    application.add_error_handler(error_handler)
+
     # Обработчики главного меню
     application.add_handler(CommandHandler("start", common.start))
+    application.add_handler(CommandHandler("cancel", common.show_main_menu))
+    application.add_handler(CommandHandler("menu", common.show_main_menu))
     application.add_handler(CallbackQueryHandler(common.show_main_menu, pattern="^back_to_main$"))
     application.add_handler(CallbackQueryHandler(friends.handle_friends_menu, pattern="^friends$"))
     application.add_handler(CallbackQueryHandler(friends.add_friend_start, pattern="^add_friend$"))

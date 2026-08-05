@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, User
 from telegram.ext import ContextTypes
@@ -58,6 +58,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
-    date_joined = (update.message.date or datetime.utcnow()).isoformat()
+    date_joined = (update.message.date or datetime.now(timezone.utc)).isoformat()
     db.upsert_user(u.id, u.username, u.first_name, u.last_name, date_joined)
     await show_main_menu(update, context)

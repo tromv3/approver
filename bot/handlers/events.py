@@ -571,8 +571,9 @@ async def event_accept_callback(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception:
         pass
 
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Меню событий", callback_data="events")]])
     try:
-        await q.edit_message_text(f"Вы приняли событие #{event_id} — спасибо!")
+        await q.edit_message_text(f"Вы приняли событие #{event_id} — спасибо!", reply_markup=kb)
         return None
     except Exception:
         return None
@@ -592,7 +593,8 @@ async def event_reject_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     context.user_data["awaiting_reject_for_event"] = event_id
     await q.edit_message_text(
-        "Вы решили отклонить событие. Укажите причину отказа (или введите '-' для пустой причины):")
+        "Вы решили отклонить событие. Укажите причину отказа (или введите '-' для пустой причины):",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отмена", callback_data="events")]]))
     return AWAIT_REJECT
 
 
@@ -609,4 +611,5 @@ async def event_reject_reason_received(update: Update, context: ContextTypes.DEF
                                            text=f"Пользователь отклонил ваше событие #{event_id}. Причина: {text or '(не указана)'}")
         except Exception:
             pass
-    await update.message.reply_text("Отказ отправлен.")
+    await update.message.reply_text("Отказ отправлен.", reply_markup=InlineKeyboardMarkup(
+        [[InlineKeyboardButton("Меню событий", callback_data="events")]]))
