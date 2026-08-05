@@ -17,6 +17,9 @@ FLOW_STATE_KEYS = (
     "event_type",
     "event_friend_id",
     "event_reminder_minutes",
+    "editing_event_id",
+    "editing_event_date",
+    "awaiting_edit_type_custom",
 )
 
 

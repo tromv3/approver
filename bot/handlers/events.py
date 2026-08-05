@@ -13,6 +13,14 @@ from .common import clear_flow_state, mention, show_main_menu
 logger = logging.getLogger(__name__)
 
 
+STATUS_LABELS = {
+    "pending": "⏳ Ожидает ответа",
+    "accepted": "🟢 Принято",
+    "declined": "🔴 Отклонено",
+    "cancelled": "⚪ Отменено",
+}
+
+
 def format_event_row(ev, viewer_id):
     user_1 = db.get_user_by_identifier(ev[1])
     user_2 = db.get_user_by_identifier(ev[2])
@@ -20,7 +28,11 @@ def format_event_row(ev, viewer_id):
         user = user_2[1]
     else:
         user = user_1[1]
-    return f"#{ev[0]} — {ev[3]} {ev[4]} — {ev[5]} c {user} — статус: {'Принято' if ev[6] == 'accepted' else 'Отклонено'}"
+    status_label = STATUS_LABELS.get(ev[6], ev[6])
+    line = f"#{ev[0]} — 📅 {ev[3]} 🕒 {ev[4]} — 🎯 {ev[5]} c {user} — {status_label}"
+    if ev[6] == "declined" and ev[7]:
+        line += f" (причина: {ev[7]})"
+    return line
 
 
 async def handle_events_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -42,6 +54,8 @@ async def handle_events_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     kb = [
         [InlineKeyboardButton("Создать событие", callback_data="event_create")],
         [InlineKeyboardButton("Мои события", callback_data="event_my")],
+        [InlineKeyboardButton("Изменить событие", callback_data="event_edit")],
+        [InlineKeyboardButton("Ожидают ответа", callback_data="event_pending_sent")],
         [InlineKeyboardButton("Удалить событие", callback_data="event_delete")],
         [InlineKeyboardButton("Назад", callback_data="back_to_main")]
     ]
@@ -227,6 +241,14 @@ async def event_my_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   reply_markup=kb)
 
 
+def _calendar_title(mode: str) -> str:
+    if mode == "create":
+        return "Выберите дату для события:"
+    if mode == "editdate":
+        return "Выберите новую дату:"
+    return "Календарь событий"
+
+
 async def event_calendar_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -264,8 +286,7 @@ async def event_calendar_callback(update: Update, context: ContextTypes.DEFAULT_
 
         # Перестраиваем календарь для предыдущего месяца
         kb = build_calendar_keyboard(prev_year, prev_month, q.from_user.id, mode)
-        await q.edit_message_text(text="Выберите дату для события:" if mode == "create" else "Календарь событий",
-                                  reply_markup=kb)
+        await q.edit_message_text(text=_calendar_title(mode), reply_markup=kb)
         return EV_SEL_DATE if mode == "create" else None
 
     elif data.startswith("cal_next_"):
@@ -284,9 +305,30 @@ async def event_calendar_callback(update: Update, context: ContextTypes.DEFAULT_
 
         # Перестраиваем календарь для следующего месяца
         kb = build_calendar_keyboard(next_year, next_month, q.from_user.id, mode)
-        await q.edit_message_text(text="Выберите дату для события:" if mode == "create" else "Календарь событий",
-                                  reply_markup=kb)
+        await q.edit_message_text(text=_calendar_title(mode), reply_markup=kb)
         return EV_SEL_DATE if mode == "create" else None
+
+    if data.startswith("select_date_editdate_"):
+        if "editing_event_id" not in context.user_data:
+            await q.edit_message_text(
+                "Сессия изменения истекла, начните заново.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
+            return None
+
+        day_str = data.split("_", 3)[3]
+        selected_date = datetime.strptime(day_str, "%Y-%m-%d").date()
+        today = db.now_local().date()
+
+        if selected_date < today:
+            await q.edit_message_text(
+                "❌ Нельзя переносить событие на прошедшую дату!",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]])
+            )
+            return None
+
+        context.user_data["editing_event_date"] = day_str
+        await q.edit_message_text(f"Новая дата: {day_str}\nТеперь введите новое время (ЧЧ:ММ):")
+        return None
 
     if data.startswith("select_date_view_"):
         day_str = data.split("_", 3)[3]
@@ -445,11 +487,13 @@ async def event_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Формируем клавиатуру с событиями
     keyboard = []
     for event in events:
-        event_id, creator_id, ev_date, ev_time, etype, status = event
+        event_id, creator_id, ev_date, ev_time, etype, status, decline_reason = event
         prefix = "🟢" if status == "accepted" else "🟡" if status == "pending" else "🔴"
         text = f"{prefix} {ev_date} {ev_time} - {etype} (ID: {event_id})"
         if creator_id == user_id:
             text += " [вы создатель]"
+        if status == "declined" and decline_reason:
+            text += f" — причина: {decline_reason}"
         keyboard.append([InlineKeyboardButton(text, callback_data=f"delete_event_{event_id}")])
 
     keyboard.append([InlineKeyboardButton("Назад", callback_data="events")])
@@ -613,3 +657,215 @@ async def event_reject_reason_received(update: Update, context: ContextTypes.DEF
             pass
     await update.message.reply_text("Отказ отправлен.", reply_markup=InlineKeyboardMarkup(
         [[InlineKeyboardButton("Меню событий", callback_data="events")]]))
+
+
+# ---------------- pending (sent, awaiting friend's answer) ----------------
+async def event_pending_sent_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    rows = db.get_pending_sent_events_for_user(query.from_user.id)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]])
+    if not rows:
+        return await query.edit_message_text("Нет событий, ожидающих ответа.", reply_markup=back_kb)
+
+    lines = ["⏳ Предложены вами, ждут ответа:"]
+    for event_id, participant_id, ev_date, ev_time, etype in rows:
+        label = db.get_user_label(participant_id)
+        lines.append(f"#{event_id} — 📅 {ev_date} 🕒 {ev_time} — 🎯 {etype} — кому: {label}")
+    await query.edit_message_text("\n".join(lines), reply_markup=back_kb)
+
+
+# ---------------- edit event (creator only: дата/время, тип) ----------------
+async def event_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    events = db.get_editable_events_for_user(user_id)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]])
+    if not events:
+        return await query.edit_message_text("Нет событий, которые можно изменить.", reply_markup=back_kb)
+
+    keyboard = []
+    for event_id, ev_date, ev_time, etype, status in events:
+        prefix = "🟢" if status == "accepted" else "🟡"
+        keyboard.append([InlineKeyboardButton(
+            f"{prefix} {ev_date} {ev_time} - {etype} (ID: {event_id})", callback_data=f"edit_event_{event_id}")])
+    keyboard.append([InlineKeyboardButton("Назад", callback_data="events")])
+    await query.edit_message_text(
+        "Выберите событие для изменения (менять может только создатель):",
+        reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def event_edit_choose_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    event_id = int(q.data.split("_")[-1])
+    ev = db.get_event(event_id)
+    back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]])
+    if not ev or ev[1] != q.from_user.id:
+        return await q.edit_message_text("Событие не найдено или вы не можете его изменить.", reply_markup=back_kb)
+    if ev[6] not in ("pending", "accepted"):
+        return await q.edit_message_text("Это событие уже нельзя изменить.", reply_markup=back_kb)
+
+    context.user_data["editing_event_id"] = event_id
+    kb = [
+        [InlineKeyboardButton("📅 Дата и время", callback_data="edit_field_datetime")],
+        [InlineKeyboardButton("🎯 Тип", callback_data="edit_field_type")],
+        [InlineKeyboardButton("Отмена", callback_data="events")],
+    ]
+    await q.edit_message_text(
+        f"Событие #{event_id}: 📅 {ev[3]} 🕒 {ev[4]} — 🎯 {ev[5]}\nЧто изменить?",
+        reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def event_edit_pick_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if "editing_event_id" not in context.user_data:
+        return await q.edit_message_text(
+            "Сессия изменения истекла, начните заново.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
+    today = db.now_local().date()
+    kb = build_calendar_keyboard(today.year, today.month, q.from_user.id, mode="editdate")
+    await q.edit_message_text("Выберите новую дату:", reply_markup=kb)
+
+
+async def event_edit_receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Ждём время только когда уже редактируем конкретное событие и выбрали
+    # для него новую дату — иначе это текст для другого флоу.
+    if "editing_event_id" not in context.user_data or "editing_event_date" not in context.user_data:
+        return None
+
+    text = update.message.text.strip()
+    try:
+        input_time = datetime.strptime(text, "%H:%M").time()
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Неверный формат времени. Введите в формате ЧЧ:ММ (например, 14:30).")
+        return None
+
+    day_str = context.user_data["editing_event_date"]
+    selected_datetime = datetime.combine(datetime.strptime(day_str, "%Y-%m-%d").date(), input_time)
+    if selected_datetime < db.now_local():
+        await update.message.reply_text("❌ Нельзя переносить событие в прошедшее время! Введите будущее время.")
+        return None
+
+    event_id = context.user_data.pop("editing_event_id")
+    context.user_data.pop("editing_event_date", None)
+
+    kb_out = InlineKeyboardMarkup([[InlineKeyboardButton("Меню событий", callback_data="events")]])
+    ev = db.get_event(event_id)
+    if not ev or ev[1] != update.effective_user.id or ev[6] not in ("pending", "accepted"):
+        return await update.message.reply_text("Событие уже нельзя изменить.", reply_markup=kb_out)
+
+    was_accepted = ev[6] == "accepted"
+    db.update_event_datetime(event_id, day_str, text)
+    if was_accepted:
+        db.reset_event_to_pending(event_id)
+
+    participant_id = ev[2]
+    label = mention(update.effective_user)
+    try:
+        if was_accepted:
+            notify_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Принять", callback_data=f"accept_event_{event_id}"),
+                                               InlineKeyboardButton("Отклонить", callback_data=f"reject_event_{event_id}")]])
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"{label} перенёс(ла) событие #{event_id} на 📅 {day_str} 🕒 {text}. Требуется подтверждение.",
+                reply_markup=notify_kb)
+        else:
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"{label} изменил(а) время события #{event_id}: теперь 📅 {day_str} 🕒 {text}.")
+    except Exception:
+        logger.exception("Не удалось уведомить пользователя %s об изменении события", participant_id)
+
+    reply = f"Событие #{event_id} обновлено: 📅 {day_str} 🕒 {text}."
+    if was_accepted:
+        reply += " Ждём повторного подтверждения от собеседника."
+    await update.message.reply_text(reply, reply_markup=kb_out)
+
+
+async def event_edit_pick_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if "editing_event_id" not in context.user_data:
+        return await q.edit_message_text(
+            "Сессия изменения истекла, начните заново.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
+    kb = [[InlineKeyboardButton(t, callback_data=f"edit_type_{t}")] for t in STD_TYPES if t != "Другое (ввести свой)"]
+    kb.append([InlineKeyboardButton("✏️ Свой вариант", callback_data="edit_type_custom")])
+    kb.append([InlineKeyboardButton("Отмена", callback_data="events")])
+    await q.edit_message_text("Выберите новый тип события:", reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def event_edit_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if "editing_event_id" not in context.user_data:
+        return await q.edit_message_text(
+            "Сессия изменения истекла, начните заново.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
+
+    chosen = q.data[len("edit_type_"):]
+    if chosen == "custom":
+        context.user_data["awaiting_edit_type_custom"] = True
+        await q.edit_message_text("Введите новый тип события:",
+                                  reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Отмена", callback_data="events")]]))
+        return None
+    return await _finish_type_edit(update, context, chosen)
+
+
+async def event_edit_type_custom_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.pop("awaiting_edit_type_custom", False):
+        return None
+    text = update.message.text.strip()
+    if not text:
+        return await update.message.reply_text("Пустой тип. Введите текст типа события:")
+    return await _finish_type_edit(update, context, text, from_message=True)
+
+
+async def _finish_type_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, new_type: str, from_message: bool = False):
+    kb_out = InlineKeyboardMarkup([[InlineKeyboardButton("Меню событий", callback_data="events")]])
+
+    async def reply(text_out):
+        if from_message:
+            await update.message.reply_text(text_out, reply_markup=kb_out)
+        else:
+            await update.callback_query.edit_message_text(text_out, reply_markup=kb_out)
+
+    event_id = context.user_data.pop("editing_event_id", None)
+    if event_id is None:
+        return await reply("Сессия изменения истекла, начните заново.")
+
+    actor = update.effective_user
+    ev = db.get_event(event_id)
+    if not ev or ev[1] != actor.id or ev[6] not in ("pending", "accepted"):
+        return await reply("Событие уже нельзя изменить.")
+
+    was_accepted = ev[6] == "accepted"
+    db.update_event_type(event_id, new_type)
+    if was_accepted:
+        db.reset_event_to_pending(event_id)
+
+    participant_id = ev[2]
+    label = mention(actor)
+    try:
+        if was_accepted:
+            notify_kb = InlineKeyboardMarkup([[InlineKeyboardButton("Принять", callback_data=f"accept_event_{event_id}"),
+                                               InlineKeyboardButton("Отклонить", callback_data=f"reject_event_{event_id}")]])
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"{label} изменил(а) тип события #{event_id} на «{new_type}». Требуется подтверждение.",
+                reply_markup=notify_kb)
+        else:
+            await context.bot.send_message(
+                chat_id=participant_id,
+                text=f"{label} изменил(а) тип события #{event_id} на «{new_type}».")
+    except Exception:
+        logger.exception("Не удалось уведомить пользователя %s об изменении события", participant_id)
+
+    text_out = f"Тип события #{event_id} изменён на «{new_type}»."
+    if was_accepted:
+        text_out += " Ждём повторного подтверждения от собеседника."
+    await reply(text_out)

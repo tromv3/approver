@@ -217,12 +217,39 @@ def get_active_events_for_user(user_id: int):
     with pool.connection() as conn:
         cur = conn.cursor()
         cur.execute(
-            """SELECT event_id, creator_id, event_date, event_time, event_type, status
+            """SELECT event_id, creator_id, event_date, event_time, event_type, status, decline_reason
                FROM events
                WHERE (creator_id = %s OR participant_id = %s)
                AND status != 'cancelled'
                ORDER BY event_date DESC, event_time DESC""",
             (user_id, user_id),
+        )
+        return cur.fetchall()
+
+
+def get_editable_events_for_user(user_id: int):
+    """События, которые user_id создал и ещё может изменить (дата/время/тип)."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT event_id, event_date, event_time, event_type, status
+               FROM events
+               WHERE creator_id = %s AND status IN ('pending', 'accepted')
+               ORDER BY event_date, event_time""",
+            (user_id,),
+        )
+        return cur.fetchall()
+
+
+def get_pending_sent_events_for_user(user_id: int):
+    """Предложенные user_id события, на которые собеседник ещё не ответил."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT event_id, participant_id, event_date, event_time, event_type
+               FROM events WHERE creator_id = %s AND status = 'pending'
+               ORDER BY event_date, event_time""",
+            (user_id,),
         )
         return cur.fetchall()
 
@@ -264,6 +291,29 @@ def mark_event_declined(event_id, reason):
     with pool.connection() as conn:
         cur = conn.cursor()
         cur.execute("UPDATE events SET status = 'declined', decline_reason = %s WHERE event_id = %s", (reason, event_id))
+
+
+def update_event_datetime(event_id, day_str, time_str):
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE events SET event_date = %s, event_time = %s WHERE event_id = %s",
+                    (day_str, time_str, event_id))
+
+
+def update_event_type(event_id, type_str):
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE events SET event_type = %s WHERE event_id = %s", (type_str, event_id))
+
+
+def reset_event_to_pending(event_id):
+    """После изменения уже принятого события статус сбрасывается — участнику
+    нужно подтвердить заново. Старые напоминания (посчитанные под старые
+    дату/время) удаляются, новые проставятся при повторном принятии."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE events SET status = 'pending', decline_reason = NULL WHERE event_id = %s", (event_id,))
+        cur.execute("DELETE FROM reminders WHERE event_id = %s", (event_id,))
 
 
 def cancel_event(event_id):

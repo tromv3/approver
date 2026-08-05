@@ -10,6 +10,7 @@ def build_calendar_keyboard(y: int, m: int, user_id: int, mode: str = "create") 
     cal = calendar.Calendar(firstweekday=0)
     month_days = cal.monthdayscalendar(y, m)
     days_with_events = db.get_days_with_events_for_user_month(user_id, y, m)
+    today_str = db.now_local().date().isoformat()
 
     keyboard = []
     header = [
@@ -29,7 +30,8 @@ def build_calendar_keyboard(y: int, m: int, user_id: int, mode: str = "create") 
                 row.append(InlineKeyboardButton(" ", callback_data="ignore"))
             else:
                 date_str = date(y, m, day).isoformat()
-                label = str(day) + ("✱" if date_str in days_with_events else "")
+                label = f"[{day}]" if date_str == today_str else str(day)
+                label += "✱" if date_str in days_with_events else ""
                 row.append(InlineKeyboardButton(label, callback_data=f"select_date_{mode}_{date_str}"))
         keyboard.append(row)
 
