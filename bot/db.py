@@ -3,12 +3,16 @@ import time
 from datetime import date, datetime, timedelta, timezone
 
 import psycopg
-import tzlocal
 
-from .config import DATABASE_URL
+from .config import DATABASE_URL, LOCAL_TZ
 
-LOCAL_TZ = tzlocal.get_localzone()
 logger = logging.getLogger(__name__)
+
+
+def now_local() -> datetime:
+    """Текущее время как наивный datetime в LOCAL_TZ — в том же виде, в
+    котором event_date/event_time хранятся и вводятся пользователем."""
+    return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 
 def get_conn():

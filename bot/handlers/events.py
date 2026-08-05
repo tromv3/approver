@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
@@ -69,7 +69,7 @@ async def show_time_suggestions(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Получаем выбранную дату
     selected_date = datetime.strptime(context.user_data["event_date"], "%Y-%m-%d").date()
-    today = date.today()
+    today = db.now_local().date()
 
     # Проверка на прошедшую дату
     if selected_date < today:
@@ -81,7 +81,7 @@ async def show_time_suggestions(update: Update, context: ContextTypes.DEFAULT_TY
 
     # Генерация временных слотов
     time_slots = []
-    now = datetime.now()
+    now = db.now_local()
 
     # Если выбрана сегодняшняя дата - начинаем с текущего времени + 30 минут
     if selected_date == today:
@@ -151,7 +151,7 @@ async def event_receive_time(update: Update, context: ContextTypes.DEFAULT_TYPE)
         selected_datetime = datetime.combine(selected_date, input_time)
 
         # Проверка на прошедшее время
-        if selected_datetime < datetime.now():
+        if selected_datetime < db.now_local():
             await update.message.reply_text("❌ Нельзя создавать события в прошедшем времени! Выберите будущее время.")
             return EV_SEL_TIME
 
@@ -211,7 +211,7 @@ async def event_create_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     q = update.callback_query
     await q.answer()
     uid = q.from_user.id
-    today = date.today()
+    today = db.now_local().date()
     kb = build_calendar_keyboard(today.year, today.month, uid, mode="create")
     await q.edit_message_text(text="Выберите дату для события:", reply_markup=kb)
     return EV_SEL_DATE
@@ -221,7 +221,7 @@ async def event_my_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    today = date.today()
+    today = db.now_local().date()
     kb = build_calendar_keyboard(today.year, today.month, user_id, mode="view")
     await query.edit_message_text("Календарь — дни с событиями помечены ✱. Выберите день для просмотра:",
                                   reply_markup=kb)
@@ -235,7 +235,7 @@ async def event_calendar_callback(update: Update, context: ContextTypes.DEFAULT_
     if data.startswith("select_date_create_"):
         day_str = data.split("_", 3)[3]
         selected_date = datetime.strptime(day_str, "%Y-%m-%d").date()
-        today = date.today()
+        today = db.now_local().date()
 
         if selected_date < today:
             await q.edit_message_text(

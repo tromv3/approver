@@ -21,6 +21,7 @@ services:
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       DATABASE_URL: postgresql://${POSTGRES_USER:-approver}:${POSTGRES_PASSWORD:-approver}@db:5432/${POSTGRES_DB:-approver}
+      LOCAL_TZ: ${LOCAL_TZ:-Europe/Moscow}
     depends_on:
       db:
         condition: service_healthy

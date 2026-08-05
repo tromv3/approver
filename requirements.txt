@@ -1,4 +1,3 @@
 python-telegram-bot[job-queue]==22.8
 python-dotenv==1.2.2
-tzlocal==5.4.4
 psycopg[binary]==3.3.4
