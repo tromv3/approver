@@ -4,6 +4,7 @@ from datetime import date
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from . import db
+from .constants import MONTHS_RU, WEEKDAYS_RU
 
 
 def build_calendar_keyboard(y: int, m: int, user_id: int, mode: str = "create") -> InlineKeyboardMarkup:
@@ -15,13 +16,12 @@ def build_calendar_keyboard(y: int, m: int, user_id: int, mode: str = "create") 
     keyboard = []
     header = [
         InlineKeyboardButton("<<", callback_data=f"cal_prev_{mode}_{y}_{m}_{user_id}"),
-        InlineKeyboardButton(f"{calendar.month_name[m]} {y}", callback_data="ignore"),
+        InlineKeyboardButton(f"{MONTHS_RU[m]} {y}", callback_data="ignore"),
         InlineKeyboardButton(">>", callback_data=f"cal_next_{mode}_{y}_{m}_{user_id}"),
     ]
     keyboard.append(header)
 
-    wk = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
-    keyboard.append([InlineKeyboardButton(d, callback_data="ignore") for d in wk])
+    keyboard.append([InlineKeyboardButton(d, callback_data="ignore") for d in WEEKDAYS_RU])
 
     for week in month_days:
         row = []

@@ -1,19 +1,22 @@
 import logging
+import re
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
 from . import db, health
 from .config import TELEGRAM_BOT_TOKEN
-from .handlers import common, events, friends
-from .reminders import reminder_loop
+from .handlers import common, events, friends, paging, start, upcoming
+from .handlers.common import REPLY_BUTTONS
+from .reminders import reminder_loop, snooze_callback
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,19 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
             )
         except Exception:
             pass
+
+
+BOT_COMMANDS = [
+    BotCommand("menu", "Главное меню"),
+    BotCommand("today", "События на сегодня"),
+    BotCommand("week", "События на 7 дней"),
+    BotCommand("cancel", "Отменить текущее действие"),
+    BotCommand("help", "Справка"),
+]
+
+
+async def post_init(application: Application) -> None:
+    await application.bot.set_my_commands(BOT_COMMANDS)
 
 
 def main(token: str | None = None) -> None:
@@ -46,15 +62,31 @@ def main(token: str | None = None) -> None:
         Application.builder()
         .token(token)
         .concurrent_updates(True)
+        .post_init(post_init)
         .build()
     )
 
     application.add_error_handler(error_handler)
 
+    # Служебные обработчики, которые должны сработать раньше остальных
+    application.add_handler(TypeHandler(Update, start.track_user), group=-2)
+    reply_buttons = re.compile("^(" + "|".join(re.escape(b) for b in REPLY_BUTTONS) + ")$")
+    application.add_handler(MessageHandler(filters.Regex(reply_buttons), start.reply_menu_router), group=-1)
+
     # Обработчики главного меню
-    application.add_handler(CommandHandler("start", common.start))
+    application.add_handler(CommandHandler("start", start.start))
+    application.add_handler(CommandHandler("help", start.help_command))
+    application.add_handler(CommandHandler("today", upcoming.today_command))
+    application.add_handler(CommandHandler("week", upcoming.week_command))
     application.add_handler(CommandHandler("cancel", common.show_main_menu))
     application.add_handler(CommandHandler("menu", common.show_main_menu))
+    application.add_handler(CallbackQueryHandler(common.ignore_callback, pattern="^ignore$"))
+    application.add_handler(CallbackQueryHandler(start.help_command, pattern="^help$"))
+    application.add_handler(CallbackQueryHandler(upcoming.upcoming_callback, pattern="^upcoming$"))
+    application.add_handler(CallbackQueryHandler(paging.paging_callback, pattern=r"^pg:"))
+    application.add_handler(CallbackQueryHandler(snooze_callback, pattern=r"^snooze_\d+_\d+$"))
+    application.add_handler(CallbackQueryHandler(friends.invite_link_start, pattern="^invite_link$"))
+    application.add_handler(CallbackQueryHandler(friends.invite_reset, pattern="^invite_reset$"))
     application.add_handler(CallbackQueryHandler(common.show_main_menu, pattern="^back_to_main$"))
     application.add_handler(CallbackQueryHandler(friends.handle_friends_menu, pattern="^friends$"))
     application.add_handler(CallbackQueryHandler(friends.add_friend_start, pattern="^add_friend$"))

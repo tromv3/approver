@@ -1,4 +1,5 @@
 import logging
+import secrets
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -110,6 +111,31 @@ def get_user_label(user_id: int) -> str:
     return f"@{username}" if username else (first_name or str(user_id))
 
 
+def get_or_create_invite_token(user_id: int) -> str:
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET invite_token = COALESCE(invite_token, %s) WHERE user_id = %s RETURNING invite_token",
+            (secrets.token_urlsafe(8), user_id),
+        )
+        return cur.fetchone()[0]
+
+
+def reset_invite_token(user_id: int) -> str:
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE users SET invite_token = %s WHERE user_id = %s RETURNING invite_token",
+                    (secrets.token_urlsafe(8), user_id))
+        return cur.fetchone()[0]
+
+
+def get_user_by_invite_token(token: str):
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, username FROM users WHERE invite_token = %s", (token,))
+        return cur.fetchone()
+
+
 # ---------------- friends ----------------
 def get_friends(user_id: int):
     with pool.connection() as conn:
@@ -160,6 +186,20 @@ def accept_friend_request(sender_id: int, recipient_id: int):
             """,
             (recipient_id, sender_id),
         )
+
+
+def make_friends(user_a: int, user_b: int):
+    """Дружба в обе стороны одним действием (для приглашения по ссылке)."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        for u, f in ((user_a, user_b), (user_b, user_a)):
+            cur.execute(
+                """
+                INSERT INTO friends (user_id, friend_id, status) VALUES (%s, %s, 'accepted')
+                ON CONFLICT (user_id, friend_id) DO UPDATE SET status = 'accepted'
+                """,
+                (u, f),
+            )
 
 
 def delete_friend_request(sender_id: int, recipient_id: int):
@@ -225,6 +265,26 @@ def get_pending_sent_events_for_user(user_id: int):
                FROM events WHERE creator_id = %s AND status = 'pending'
                ORDER BY event_date, event_time""",
             (user_id,),
+        )
+        return cur.fetchall()
+
+
+_EVENT_COLS = ("event_id, creator_id, participant_id, event_date, event_time, event_type, status, "
+               "decline_reason, reminder_minutes")
+
+
+def get_upcoming_events_for_user(user_id: int, from_date: str, from_time: str, to_date: str):
+    """Ожидающие и принятые события в окне [сейчас, конец to_date], по возрастанию времени."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"""SELECT {_EVENT_COLS} FROM events
+                WHERE (creator_id = %s OR participant_id = %s)
+                  AND status IN ('pending', 'accepted')
+                  AND (event_date > %s OR (event_date = %s AND event_time >= %s))
+                  AND event_date <= %s
+                ORDER BY event_date, event_time""",
+            (user_id, user_id, from_date, from_date, from_time, to_date),
         )
         return cur.fetchall()
 
@@ -325,6 +385,14 @@ def add_reminder_for_user(user_id, event_id, day_str, time_str, reminder_minutes
         cur = conn.cursor()
         cur.execute("INSERT INTO reminders (user_id, event_id, remind_at, sent) VALUES (%s, %s, %s, 0)",
                     (user_id, event_id, remind_at))
+
+
+def add_reminder_at(user_id, event_id, remind_at_iso: str):
+    """Одиночное напоминание на конкретный момент (UTC, 'YYYY-MM-DDTHH:MM') — для «Отложить»."""
+    with pool.connection() as conn:
+        cur = conn.cursor()
+        cur.execute("INSERT INTO reminders (user_id, event_id, remind_at, sent) VALUES (%s, %s, %s, 0)",
+                    (user_id, event_id, remind_at_iso))
 
 
 def claim_due_reminders(now_iso: str):

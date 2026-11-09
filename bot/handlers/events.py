@@ -8,6 +8,7 @@ from .. import db
 from ..constants import AWAIT_REJECT, EV_CONFIRM, EV_SEL_DATE, EV_SEL_REM, EV_SEL_TIME, EV_TYPE_CH, EV_TYPE_CUSTOM, \
     STD_REMS, STD_TYPES
 from ..keyboards import build_calendar_keyboard
+from ..pagination import nav_row, paginate
 from .common import clear_flow_state, mention
 
 logger = logging.getLogger(__name__)
@@ -376,7 +377,7 @@ async def event_type_custom_received(update: Update, context: ContextTypes.DEFAU
     return await prompt_choose_friend_for_event(update, context)
 
 
-async def prompt_choose_friend_for_event(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def prompt_choose_friend_for_event(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     if update.callback_query:
         q = update.callback_query
         await q.answer()
@@ -392,8 +393,10 @@ async def prompt_choose_friend_for_event(update: Update, context: ContextTypes.D
         return await send("У вас нет друзей для предложения события. Добавьте друзей и попробуйте снова.",
                           reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Назад", callback_data="events")]]))
 
+    chunk, page, pages = paginate(friends, page)
     kb = [[InlineKeyboardButton(f"@{u[1]}" if u[1] else str(u[0]), callback_data=f"event_friend_{u[0]}")] for u in
-          friends]
+          chunk]
+    kb += nav_row("evfr", page, pages)
     kb.append([InlineKeyboardButton("Отмена", callback_data="events")])
     return await send("Кому предложить событие? Выберите друга:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -469,7 +472,7 @@ async def event_confirm_create(update: Update, context: ContextTypes.DEFAULT_TYP
     return None
 
 
-async def event_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def event_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     """Начало процесса удаления события - показывает список событий пользователя"""
     query = update.callback_query
     await query.answer()
@@ -486,7 +489,8 @@ async def event_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     # Формируем клавиатуру с событиями
     keyboard = []
-    for event in events:
+    chunk, page, pages = paginate(events, page)
+    for event in chunk:
         event_id, creator_id, ev_date, ev_time, etype, status, decline_reason = event
         prefix = "🟢" if status == "accepted" else "🟡" if status == "pending" else "🔴"
         text = f"{prefix} {ev_date} {ev_time} - {etype} (ID: {event_id})"
@@ -496,6 +500,7 @@ async def event_delete_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
             text += f" — причина: {decline_reason}"
         keyboard.append([InlineKeyboardButton(text, callback_data=f"delete_event_{event_id}")])
 
+    keyboard += nav_row("evdel", page, pages)
     keyboard.append([InlineKeyboardButton("Назад", callback_data="events")])
 
     await query.edit_message_text(
@@ -676,7 +681,7 @@ async def event_pending_sent_start(update: Update, context: ContextTypes.DEFAULT
 
 
 # ---------------- edit event (creator only: дата/время, тип) ----------------
-async def event_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def event_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -686,10 +691,12 @@ async def event_edit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await query.edit_message_text("Нет событий, которые можно изменить.", reply_markup=back_kb)
 
     keyboard = []
-    for event_id, ev_date, ev_time, etype, status in events:
+    chunk, page, pages = paginate(events, page)
+    for event_id, ev_date, ev_time, etype, status in chunk:
         prefix = "🟢" if status == "accepted" else "🟡"
         keyboard.append([InlineKeyboardButton(
             f"{prefix} {ev_date} {ev_time} - {etype} (ID: {event_id})", callback_data=f"edit_event_{event_id}")])
+    keyboard += nav_row("evedit", page, pages)
     keyboard.append([InlineKeyboardButton("Назад", callback_data="events")])
     await query.edit_message_text(
         "Выберите событие для изменения (менять может только создатель):",

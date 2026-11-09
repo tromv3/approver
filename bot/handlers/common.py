@@ -1,9 +1,5 @@
-from datetime import datetime, timezone
-
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, User
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update, User
 from telegram.ext import ContextTypes
-
-from .. import db
 
 # Ключи в context.user_data, которыми хендлеры отмечают "жду текстовый ввод для X".
 # Сбрасываются при любом возврате в одно из главных меню, чтобы случайный текст
@@ -20,6 +16,34 @@ FLOW_STATE_KEYS = (
     "editing_event_id",
     "editing_event_date",
     "awaiting_edit_type_custom",
+)
+
+# Подписи кнопок нижней клавиатуры; handlers/start.py ловит их как обычный текст.
+BTN_UPCOMING = "📆 Ближайшие"
+BTN_EVENTS = "📅 События"
+BTN_FRIENDS = "👥 Друзья"
+BTN_HELP = "ℹ️ Помощь"
+REPLY_BUTTONS = (BTN_UPCOMING, BTN_EVENTS, BTN_FRIENDS, BTN_HELP)
+
+REPLY_KEYBOARD = ReplyKeyboardMarkup(
+    [[BTN_UPCOMING, BTN_EVENTS], [BTN_FRIENDS, BTN_HELP]],
+    resize_keyboard=True,
+    is_persistent=True,
+)
+
+HELP_TEXT = (
+    "ℹ️ Как это работает\n\n"
+    "👥 Друзья — добавьте друга по @username или пригласите его по личной ссылке.\n"
+    "📅 События — выберите дату, время и тип, затем друга. Он получит приглашение и сможет "
+    "принять его или отклонить с причиной. Своё событие можно изменить или удалить.\n"
+    "📆 Ближайшие — что запланировано на неделю и какие приглашения ждут вашего ответа.\n"
+    "⏰ Напоминания приходят перед событием; их можно отложить кнопкой под сообщением.\n\n"
+    "Команды:\n"
+    "/menu — главное меню\n"
+    "/today — события на сегодня\n"
+    "/week — события на 7 дней\n"
+    "/cancel — отменить текущее действие\n"
+    "/help — эта справка"
 )
 
 
@@ -42,25 +66,17 @@ async def send_text(update: Update, text: str, reply_markup=None):
         await update.message.reply_text(text=text, reply_markup=reply_markup)
 
 
+async def ignore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопки-заглушки (заголовок календаря, номер страницы): просто гасим «часики»."""
+    await update.callback_query.answer()
+
+
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_flow_state(context)
     kb = [
-        [InlineKeyboardButton("Друзья", callback_data="friends")],
-        [InlineKeyboardButton("События", callback_data="events")]
+        [InlineKeyboardButton("📆 Ближайшие", callback_data="upcoming")],
+        [InlineKeyboardButton("📅 События", callback_data="events"),
+         InlineKeyboardButton("👥 Друзья", callback_data="friends")],
+        [InlineKeyboardButton("ℹ️ Помощь", callback_data="help")],
     ]
-
-    if update.callback_query:
-        await update.callback_query.edit_message_text(
-            text="Главное меню. Выберите раздел:",
-            reply_markup=InlineKeyboardMarkup(kb))
-    else:
-        await update.message.reply_text(
-            text="Главное меню. Выберите раздел:",
-            reply_markup=InlineKeyboardMarkup(kb))
-
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u = update.effective_user
-    date_joined = (update.message.date or datetime.now(timezone.utc)).isoformat()
-    db.upsert_user(u.id, u.username, u.first_name, u.last_name, date_joined)
-    await show_main_menu(update, context)
+    await send_text(update, "Главное меню. Выберите раздел:", InlineKeyboardMarkup(kb))
