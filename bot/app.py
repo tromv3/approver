@@ -10,7 +10,7 @@ from telegram.ext import (
     filters,
 )
 
-from . import db
+from . import db, health
 from .config import TELEGRAM_BOT_TOKEN
 from .handlers import common, events, friends
 from .reminders import reminder_loop
@@ -95,7 +95,8 @@ def main(token: str | None = None) -> None:
     application.add_handler(CallbackQueryHandler(events.handle_time_selection, pattern="^(time_|manual_time_input)"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, events.event_receive_time), group=1)
 
-    # Напоминания
+    # Напоминания и self-healing
+    health.start_watchdog()
     application.job_queue.run_repeating(reminder_loop, interval=60, first=10)
 
     try:

@@ -16,3 +16,6 @@ users.db
 
 # IDE
 .idea/
+
+# Backups
+backups/

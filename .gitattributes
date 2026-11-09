@@ -1,0 +1,2 @@
+# Shell-скрипты выполняются в Linux-контейнере: CRLF из Windows-чекаута ломает их.
+*.sh text eol=lf

@@ -8,7 +8,7 @@ from .. import db
 from ..constants import AWAIT_REJECT, EV_CONFIRM, EV_SEL_DATE, EV_SEL_REM, EV_SEL_TIME, EV_TYPE_CH, EV_TYPE_CUSTOM, \
     STD_REMS, STD_TYPES
 from ..keyboards import build_calendar_keyboard
-from .common import clear_flow_state, mention, show_main_menu
+from .common import clear_flow_state, mention
 
 logger = logging.getLogger(__name__)
 

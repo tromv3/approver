@@ -1,6 +1,7 @@
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import psycopg
 from psycopg_pool import ConnectionPool
@@ -18,6 +19,28 @@ def now_local() -> datetime:
     return datetime.now(LOCAL_TZ).replace(tzinfo=None)
 
 
+MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+MIGRATION_LOCK_ID = 727274  # произвольный ключ advisory-lock, чтобы два процесса не мигрировали одновременно
+
+
+def run_migrations(conn) -> None:
+    """Применяет по порядку все bot/migrations/*.sql, которых ещё нет в
+    schema_migrations. Всё выполняется в одной транзакции: либо все новые
+    миграции, либо ни одной."""
+    conn.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK_ID,))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    )
+    applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
+    for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if path.stem in applied:
+            continue
+        logger.info("Применяю миграцию %s", path.stem)
+        conn.execute(path.read_text(encoding="utf-8"))
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (path.stem,))
+
+
 def init_db():
     last_error = None
     for attempt in range(10):
@@ -31,56 +54,8 @@ def init_db():
     else:
         raise RuntimeError(f"Не удалось подключиться к Postgres: {last_error}")
 
-    cur = conn.cursor()
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT UNIQUE,
-            first_name TEXT,
-            last_name TEXT,
-            date_joined TEXT
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS friends (
-            user_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
-            friend_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
-            status TEXT NOT NULL CHECK (status IN ('pending', 'accepted')),
-            PRIMARY KEY (user_id, friend_id)
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS events (
-            event_id SERIAL PRIMARY KEY,
-            creator_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
-            participant_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
-            event_date TEXT NOT NULL,
-            event_time TEXT NOT NULL,
-            event_type TEXT NOT NULL,
-            status TEXT NOT NULL,
-            decline_reason TEXT,
-            reminder_minutes INTEGER DEFAULT 0,
-            created_at TEXT NOT NULL
-        )
-        """
-    )
-    cur.execute(
-        """
-        CREATE TABLE IF NOT EXISTS reminders (
-            reminder_id SERIAL PRIMARY KEY,
-            user_id BIGINT NOT NULL REFERENCES users (user_id) ON DELETE CASCADE,
-            event_id INTEGER NOT NULL REFERENCES events (event_id) ON DELETE CASCADE,
-            remind_at TEXT NOT NULL,
-            sent INTEGER DEFAULT 0
-        )
-        """
-    )
-    conn.commit()
+    with conn:
+        run_migrations(conn)
     conn.close()
 
     pool.open(wait=True, timeout=30)

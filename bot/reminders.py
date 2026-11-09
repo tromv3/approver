@@ -3,12 +3,13 @@ from datetime import datetime, timezone
 
 from telegram.ext import ContextTypes
 
-from . import db
+from . import db, health
 
 logger = logging.getLogger(__name__)
 
 
 async def reminder_loop(context: ContextTypes.DEFAULT_TYPE):
+    health.beat()
     now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="minutes")
     reminders = db.claim_due_reminders(now)
     for reminder_id, user_id, event_id, ev_date, ev_time, ev_type, creator_id, participant_id in reminders:
